@@ -95,7 +95,11 @@ jobs:
           uploadUpdaterJson: false
           args: --bundles ${{ matrix.bundles }} -- --locked
           retryAttempts: 2
-      - run: npm test
+      - name: Test the reporting workers
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then export TMPDIR="$(cd "$TMPDIR" && pwd -P)"; fi
+          npm test
       - name: Verify the macOS bundle
         if: runner.os == 'macOS'
         run: |

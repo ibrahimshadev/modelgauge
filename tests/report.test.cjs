@@ -125,7 +125,7 @@ test("standalone report prices, deduplicates, matches models and redeems only a 
     r: [[timestamp, 0, 0, 1000000, 0, 0, 0, 0, "retained-turn", null, 0]],
   };
   const historyFile = path.join(env.T3CODE_HOME, "userdata", "usage-scan-cache-v17.json");
-  const project = path.dirname(fixture);
+  const project = await fs.realpath(path.dirname(fixture));
   const history = JSON.stringify({
     version: 17, models: ["fixture-model"], sessions: ["retained-session"],
     files: {
