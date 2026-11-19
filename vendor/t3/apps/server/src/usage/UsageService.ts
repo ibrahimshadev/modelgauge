@@ -446,14 +446,15 @@ export const make = Effect.gen(function* () {
     return { dirs, pending };
   });
 
+  const readDocument = (filePath: string) =>
+    fileSystem.readFileString(filePath).pipe(
+      Effect.flatMap((raw) => decodeScanCacheFile(raw)),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+
   // Share first loads so concurrent readers cannot scan against a still-empty cache.
   const ensureScanCacheLoaded = yield* Effect.cached(
     Effect.gen(function* () {
-      const readDocument = (filePath: string) =>
-        fileSystem.readFileString(filePath).pipe(
-          Effect.flatMap((raw) => decodeScanCacheFile(raw)),
-          Effect.catchCause(() => Effect.succeed(null)),
-        );
       let document = yield* readDocument(scanCachePath);
       const current = document !== null;
       for (const fileName of LEGACY_SCAN_CACHE_FILE_NAMES) {
@@ -479,6 +480,39 @@ export const make = Effect.gen(function* () {
       }
     }),
   );
+
+  // T3 can retain transcripts deleted before this worker ever saw them. Local entries win.
+  let importedHistoryKey: string | undefined;
+  const importRetainedHistory = Effect.fn("UsageService.importRetainedHistory")(function* (
+    retentionCutoffMs: number,
+    retentionDays: ServerSettingsValue["usageHistoryRetentionDays"],
+  ) {
+    const historyPath = path.join(ServerConfig.t3StateDir, SCAN_CACHE_FILE_NAME);
+    if (historyPath === scanCachePath) return;
+    const info = yield* fileSystem.stat(historyPath).pipe(Effect.option);
+    if (Option.isNone(info)) return;
+    const mtimeMs = Option.getOrUndefined(info.value.mtime)?.getTime();
+    const key = `${mtimeMs}:${info.value.size}:${retentionDays}`;
+    if (mtimeMs !== undefined && key === importedHistoryKey) return;
+    const document = yield* readDocument(historyPath);
+    if (document === null) return;
+    for (const [filePath, entry] of decodeScanCache(document, transcriptFormats)) {
+      if (entry.mtimeMs >= retentionCutoffMs && !fileCache.has(filePath)) {
+        fileCache.set(filePath, entry);
+        cacheDirty = true;
+      }
+    }
+    const sources = decodeCachedSources(document);
+    if (Option.isSome(sources)) {
+      for (const [key, source] of Object.entries(sources.value.sources)) {
+        if (!sourceCache.has(key)) {
+          sourceCache.set(key, source);
+          cacheDirty = true;
+        }
+      }
+    }
+    importedHistoryKey = key;
+  });
 
   const writeScanCache = makeScanCacheWriter();
   // Serialize writes so concurrently finished window scans cannot overwrite newer snapshots.
@@ -878,6 +912,7 @@ export const make = Effect.gen(function* () {
         : Math.max(0, startedAtMs - settings.usageHistoryRetentionDays * 24 * 60 * 60 * 1000);
 
     const awaitRefresh = input.awaitRefresh === true;
+    yield* importRetainedHistory(retentionCutoffMs, settings.usageHistoryRetentionDays);
     const collect = Effect.gen(function* () {
       const resolved = yield* resolveTranscriptDirs(settings, retentionCutoffMs, awaitRefresh).pipe(
         Effect.provideContext(readerContext),

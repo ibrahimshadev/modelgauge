@@ -118,6 +118,31 @@ test("standalone report prices, deduplicates, matches models and redeems only a 
   assert.equal(bucket.totals.outputTokens, 500000);
   assert.equal(bucket.costUsd, 4.5);
   assert.equal(bucket.sessions, 1);
+  // A later T3 scan can recover usage that is absent from an existing ModelGauge cache.
+  const timestamp = Date.parse(today);
+  const retained = {
+    p: "claude", s: 1, m: timestamp, t: [], mr: 0, o: 1, gl: 0, gh: 0, cs: null,
+    r: [[timestamp, 0, 0, 1000000, 0, 0, 0, 0, "retained-turn", null, 0]],
+  };
+  const historyFile = path.join(env.T3CODE_HOME, "userdata", "usage-scan-cache-v17.json");
+  const project = path.dirname(fixture);
+  const history = JSON.stringify({
+    version: 17, models: ["fixture-model"], sessions: ["retained-session"],
+    files: {
+      [path.join(project, "already-deleted.jsonl")]: retained,
+      [path.join(project, "conversation.jsonl")]: retained,
+    },
+  });
+  await fs.writeFile(historyFile, history);
+  for (let refresh = 0; refresh < 2; refresh++) {
+    const updated = await call("summary", {
+      sinceDay: today.slice(0, 10), untilDay: today.slice(0, 10), timeZone: "UTC", awaitRefresh: true,
+    });
+    const row = updated.buckets.find((b) => b.model === "matched-model");
+    assert.equal(row.sessions, 2, "recover the deleted session once and preserve the local session");
+    assert.equal(row.costUsd, 6.5);
+  }
+  assert.equal(await fs.readFile(historyFile, "utf8"), history);
   await assert.rejects(
     call("save", { patch: { usagePriceOverrides: { bad: {} } } }),
     /Invalid model price/,
