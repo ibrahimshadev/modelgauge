@@ -62,12 +62,32 @@ jobs:
           rustup toolchain install 1.93.0 --profile minimal
           rustup override set 1.93.0
       - run: npm ci
-      - name: Build Windows Tauri packages
+      - name: Build Windows UI and reporting worker
         if: runner.os == 'Windows'
+        timeout-minutes: 4
+        run: node scripts/build.mjs
+      - name: Stage verified Windows and WSL runtimes
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
         shell: pwsh
         run: |
           $env:Path = "$env:SystemRoot\System32;$env:Path"
-          npm run package -- --bundles nsis -- --locked
+          $version = node -p "process.versions.node"
+          New-Item -ItemType Directory -Force dist/runtime | Out-Null
+          foreach ($platform in @('win-x64.zip', 'linux-x64.tar.xz')) {
+            $name = "node-v$version-$platform"
+            curl.exe --fail --location --retry 2 --max-time 60 --output "dist/runtime/$name" "https://nodejs.org/dist/v$version/$name"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          node scripts/runtimes.mjs x86_64-pc-windows-msvc
+      - name: Fetch Windows Rust dependencies
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        run: cargo fetch --locked --target x86_64-pc-windows-msvc
+      - name: Build Windows Tauri packages
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./node_modules/.bin/tauri build --verbose --config '{"build":{"beforeBuildCommand":""}}' --bundles nsis -- --locked
       - name: Build Unix Tauri packages
         if: runner.os != 'Windows'
         run: npm run package -- --bundles "${{ matrix.bundles }}" -- --locked
