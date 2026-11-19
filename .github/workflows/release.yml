@@ -98,7 +98,8 @@ jobs:
       - name: Test the reporting workers
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == "macOS" ]]; then export TMPDIR="$(cd "$TMPDIR" && pwd -P)"; fi
+          TMPDIR=$(node -p "require('node:fs').realpathSync.native(process.env.RUNNER_TEMP)")
+          export TMPDIR TEMP="$TMPDIR" TMP="$TMPDIR"
           npm test
       - name: Verify the macOS bundle
         if: runner.os == 'macOS'
