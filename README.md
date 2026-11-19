@@ -15,7 +15,7 @@ Get the package for your machine from [GitHub Releases](https://github.com/ibrah
 | Windows x64 | Run the setup executable, or extract the entire portable ZIP and open `modelgauge.exe`. The app uses WebView2. |
 | Windows with WSL | Use the Windows package. Your Windows environment and installed WSL distributions appear in the same report. The included Linux worker supports glibc distributions. |
 | Linux x64 | Install the Debian package or make the AppImage executable and open it. For hosts without FUSE, launch with `APPIMAGE_EXTRACT_AND_RUN=1`. |
-| macOS 13.5 or later | Choose the Apple Silicon or Intel ZIP and move ModelGauge.app to Applications. The apps are ad hoc signed and unnotarized. |
+| macOS 13.5 or later | Open the Apple Silicon or Intel .app.tar.gz archive and move ModelGauge.app to Applications. The apps are ad hoc signed and unnotarized. |
 
 Click the tray icon to open the report. On Windows and macOS, click it again to hide the panel. Linux desktops with an indicator menu provide **Open ModelGauge** there. The × button returns the app to the tray. Pass `--tray` to start hidden.
 
@@ -41,7 +41,7 @@ Set `MODELGAUGE_HOME` in a worker’s environment to override its data directory
 
 ## Build and verify
 
-Use Node 24, npm, Rust and [Tauri’s native platform prerequisites](https://v2.tauri.app/start/prerequisites/). Windows requires the MSVC C++ build tools. Each operating system needs its own node_modules directory.
+Use Node 24.16.0, npm, Rust and [Tauri’s native platform prerequisites](https://v2.tauri.app/start/prerequisites/). Windows requires the MSVC C++ build tools. Each operating system needs its own node_modules directory.
 
 ```sh
 npm ci
@@ -51,8 +51,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run package
 ```
 
-The Tauri bundler writes installers to `src-tauri/target/release/bundle` (or the equivalent `CARGO_TARGET_DIR`). The JS build pins and verifies the Node binaries used by the reporting workers. For a cross-build, set `MODELGAUGE_TARGET` to the Rust target triple before running the build.
+The Tauri bundler writes installers to `src-tauri/target/release/bundle` (or the equivalent `CARGO_TARGET_DIR`). Build on the target OS and architecture. The build copies the Node executable pinned in `.node-version` as the reporting worker. Before building on Windows, run `node scripts/runtimes.mjs --wsl` in a glibc Linux environment of the same architecture and copy its `dist/wsl` directory into the Windows checkout. A shared WSL and Windows checkout already has those files.
 
 On Windows, run `npm run test:desktop` and `npm run test:popovers` after packaging. Both suites use the actual WebView2 app with an isolated profile. Set `MODELGAUGE_EXECUTABLE` to test a different release executable and `MODELGAUGE_SCREENSHOTS` to save popover captures. The tests exercise reset confirmation with synthetic credits. The report tests use temporary homes and a local provider fixture for pricing, matching, persistence and redemption.
 
-Pushing a version tag matching `package.json` (for example, `v0.1.2`) starts the [release workflow](.github/workflows/release.yml). GitHub builds the packages on hosted runners and publishes them with SHA-256 checksums after every platform succeeds.
+Pushing a version tag matching `package.json` (for example, `v0.1.3`) starts the [release workflow](.github/workflows/release.yml). GitHub builds the packages on hosted runners and attaches them to a draft release. After every platform succeeds, GitHub adds SHA-256 checksums. Publication is manual.

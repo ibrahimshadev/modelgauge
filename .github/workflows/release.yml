@@ -17,10 +17,10 @@ permissions:
   contents: read
 
 jobs:
-  windows-runtimes:
-    name: Prepare Windows and WSL runtimes
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
+  wsl-runtime:
+    name: Stage Linux runtime for WSL
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
@@ -28,42 +28,36 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
-          node-version: '24.16.0'
-      - run: node scripts/runtimes.mjs x86_64-pc-windows-msvc
+          node-version-file: .node-version
+      - name: Check release version and publication status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node -e 'const v=require("./package.json").version; if(process.env.RELEASE_TAG!=="v"+v || require("./src-tauri/tauri.conf.json").version!==v) process.exit(1)'
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" | jq -se --arg tag "$RELEASE_TAG" 'all(.[][]; .tag_name != $tag or .draft)'
+      - run: node scripts/runtimes.mjs --wsl
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-runtimes
-          path: |
-            src-tauri/binaries/modelgauge-node-x86_64-pc-windows-msvc.exe
-            dist/wsl/node
-            dist/runtime/LICENSE-Node
+          name: wsl-runtime
+          path: dist/wsl/
           if-no-files-found: error
           retention-days: 1
 
   build:
-    needs: windows-runtimes
+    needs: wsl-runtime
     name: Build ${{ matrix.platform }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-x64
-            os: windows-2022
-            bundles: nsis
-          - platform: linux-x64
-            os: ubuntu-22.04
-            bundles: deb,appimage
-          - platform: mac-arm64
-            os: macos-15
-            bundles: app
-          - platform: mac-x64
-            os: macos-15-intel
-            bundles: app
+          - { platform: windows-x64, os: windows-2022, bundles: nsis }
+          - { platform: linux-x64, os: ubuntu-22.04, bundles: 'deb,appimage' }
+          - { platform: mac-arm64, os: macos-15, bundles: app }
+          - { platform: mac-x64, os: macos-15-intel, bundles: app }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 55
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v6
         with:
@@ -71,11 +65,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
-          node-version: '24.16.0'
+          node-version-file: .node-version
           cache: npm
-      - name: Check release version
-        run: |
-          node -e 'const v=require("./package.json").version; if(process.env.RELEASE_TAG!=="v"+v || require("./src-tauri/tauri.conf.json").version!==v) process.exit(1)'
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -86,93 +77,60 @@ jobs:
           rustup toolchain install 1.93.0 --profile minimal
           rustup override set 1.93.0
       - run: npm ci
-      - name: Build Windows UI and reporting worker
-        if: runner.os == 'Windows'
-        timeout-minutes: 4
-        run: node scripts/build.mjs
-      - name: Install verified Windows and WSL runtimes
+      - name: Restore WSL runtime into the Windows bundle
         if: runner.os == 'Windows'
         uses: actions/download-artifact@v4
         with:
-          name: windows-runtimes
-          path: .
-      - name: Fetch Windows Rust dependencies
+          name: wsl-runtime
+          path: dist/wsl
+      - name: Build and upload Tauri packages to the draft
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ModelGauge ${{ env.RELEASE_TAG }}
+          releaseBody: "Recovers retained Claude sessions in the 90-day usage report. Includes Tauri packages for Windows, Linux and macOS."
+          releaseDraft: true
+          uploadUpdaterJson: false
+          args: --bundles ${{ matrix.bundles }} -- --locked
+          retryAttempts: 2
+      - run: npm test
+      - name: Verify the macOS bundle
+        if: runner.os == 'macOS'
+        run: |
+          app=src-tauri/target/release/bundle/macos/ModelGauge.app
+          lipo "$app/Contents/MacOS/modelgauge" -verify_arch "$(uname -m)"
+          lipo "$app/Contents/MacOS/modelgauge-node" -verify_arch "$(uname -m)"
+          test -s "$app/Contents/Resources/worker.cjs"
+          codesign --verify --deep --strict "$app"
+      - name: Add the portable Windows ZIP to the draft
         if: runner.os == 'Windows'
-        working-directory: src-tauri
-        run: cargo fetch --locked --target x86_64-pc-windows-msvc
-      - name: Build Windows Tauri packages
-        if: runner.os == 'Windows'
-        shell: bash
-        run: ./node_modules/.bin/tauri build --verbose --config '{"build":{"beforeBuildCommand":""}}' --bundles nsis -- --locked
-      - name: Build Unix Tauri packages
-        if: runner.os != 'Windows'
-        run: npm run package -- --bundles "${{ matrix.bundles }}" -- --locked
-      - name: Test reporting workers
-        run: npm test
-      - name: Collect Windows installer and portable application
-        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          $build = "src-tauri/target/release"
-          New-Item -ItemType Directory -Path artifacts | Out-Null
-          Copy-Item "$build/bundle/nsis/ModelGauge_${version}_x64-setup.exe" artifacts
-          $files = @("modelgauge.exe","modelgauge-node.exe","worker.cjs","licenses","wsl") | ForEach-Object { Join-Path $build $_ }
-          Compress-Archive -Path $files -DestinationPath "artifacts/ModelGauge-$version-windows-x64-portable.zip"
-      - name: Collect Linux packages
-        if: runner.os == 'Linux'
-        run: |
-          mkdir artifacts
-          cp src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage artifacts/
-      - name: Verify and archive macOS application
-        if: runner.os == 'macOS'
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          app=src-tauri/target/release/bundle/macos/ModelGauge.app
-          case "$PLATFORM" in mac-x64) arch=x86_64 ;; mac-arm64) arch=arm64 ;; esac
-          lipo "$app/Contents/MacOS/modelgauge" -verify_arch "$arch"
-          lipo "$app/Contents/MacOS/modelgauge-node" -verify_arch "$arch"
-          test -s "$app/Contents/Resources/worker.cjs"
-          codesign --force --sign - "$app"
-          codesign --verify --deep --strict "$app"
-          mkdir artifacts
-          ditto -c -k --keepParent "$app" "artifacts/ModelGauge-${RELEASE_TAG#v}-$PLATFORM.zip"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.platform }}
-          path: artifacts/*
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
+          $files = @("modelgauge.exe","modelgauge-node.exe","worker.cjs","licenses","wsl") | ForEach-Object { Join-Path "src-tauri/target/release" $_ }
+          $zip = "ModelGauge-$version-windows-x64-portable.zip"
+          Compress-Archive -Path $files -DestinationPath $zip
+          gh release upload $env:RELEASE_TAG $zip --clobber
 
-  publish:
-    name: Publish GitHub Release
+  checksums:
+    name: Verify draft downloads
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          pattern: release-*
-          merge-multiple: true
-      - name: Publish verified packages
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
+      - run: |
           set -euo pipefail
-          cd artifacts
-          version=${RELEASE_TAG#v}
-          files=("ModelGauge_${version}_x64-setup.exe" "ModelGauge-$version-windows-x64-portable.zip"
-                 "ModelGauge_${version}_amd64.deb" "ModelGauge_${version}_amd64.AppImage"
-                 "ModelGauge-$version-mac-arm64.zip" "ModelGauge-$version-mac-x64.zip")
-          sha256sum "${files[@]}" > SHA256SUMS.txt
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-              --title "ModelGauge $version" --notes "Tauri builds for Windows, macOS, and Linux. SHA256SUMS.txt lists the checksum for each download."
-          fi
-          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
-          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${files[@]}" SHA256SUMS.txt
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft | grep -qx true
+          mkdir packages && cd packages
+          gh release download "$RELEASE_TAG" --pattern 'ModelGauge*'
+          [[ $(find . -type f | wc -l) -eq 6 ]]
+          sha256sum ModelGauge* > SHA256SUMS.txt
+          gh release upload "$RELEASE_TAG" SHA256SUMS.txt --clobber

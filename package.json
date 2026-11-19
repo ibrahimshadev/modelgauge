@@ -1,7 +1,7 @@
 {
   "name": "modelgauge",
   "productName": "ModelGauge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Model usage, cost, and provider limits in a standalone Tauri tray app.",
   "author": "ModelGauge contributors",
