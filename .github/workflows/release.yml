@@ -62,7 +62,12 @@ jobs:
           rustup toolchain install 1.93.0 --profile minimal
           rustup override set 1.93.0
       - run: npm ci
+      - name: Use the Windows archive tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$env:SystemRoot\System32"
       - name: Build Tauri application and packages
+        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
         run: npm run package -- --bundles "${{ matrix.bundles }}" -- --locked
       - name: Test reporting workers
         run: npm test
