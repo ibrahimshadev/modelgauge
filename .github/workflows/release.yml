@@ -95,8 +95,8 @@ jobs:
         run: |
           app=src-tauri/target/release/bundle/macos/ModelGauge.app
           case "$PLATFORM" in mac-x64) arch=x86_64 ;; mac-arm64) arch=arm64 ;; esac
-          lipo -verify_arch "$arch" "$app/Contents/MacOS/modelgauge"
-          lipo -verify_arch "$arch" "$app/Contents/MacOS/modelgauge-node"
+          lipo "$app/Contents/MacOS/modelgauge" -verify_arch "$arch"
+          lipo "$app/Contents/MacOS/modelgauge-node" -verify_arch "$arch"
           test -s "$app/Contents/Resources/worker.cjs"
           codesign --force --sign - "$app"
           codesign --verify --deep --strict "$app"
