@@ -17,7 +17,31 @@ permissions:
   contents: read
 
 jobs:
+  windows-runtimes:
+    name: Prepare Windows and WSL runtimes
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.16.0'
+      - run: node scripts/runtimes.mjs x86_64-pc-windows-msvc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-runtimes
+          path: |
+            src-tauri/binaries/modelgauge-node-x86_64-pc-windows-msvc.exe
+            dist/wsl/node
+            dist/runtime/LICENSE-Node
+          if-no-files-found: error
+          retention-days: 1
+
   build:
+    needs: windows-runtimes
     name: Build ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -66,20 +90,12 @@ jobs:
         if: runner.os == 'Windows'
         timeout-minutes: 4
         run: node scripts/build.mjs
-      - name: Stage verified Windows and WSL runtimes
+      - name: Install verified Windows and WSL runtimes
         if: runner.os == 'Windows'
-        timeout-minutes: 6
-        shell: pwsh
-        run: |
-          $env:Path = "$env:SystemRoot\System32;$env:Path"
-          $version = node -p "process.versions.node"
-          New-Item -ItemType Directory -Force dist/runtime | Out-Null
-          foreach ($platform in @('win-x64.zip', 'linux-x64.tar.xz')) {
-            $name = "node-v$version-$platform"
-            curl.exe --fail --location --retry 2 --max-time 60 --output "dist/runtime/$name" "https://nodejs.org/dist/v$version/$name"
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          }
-          node scripts/runtimes.mjs x86_64-pc-windows-msvc
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-runtimes
+          path: .
       - name: Fetch Windows Rust dependencies
         if: runner.os == 'Windows'
         working-directory: src-tauri
@@ -124,7 +140,7 @@ jobs:
           ditto -c -k --keepParent "$app" "artifacts/ModelGauge-${RELEASE_TAG#v}-$PLATFORM.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}
+          name: release-${{ matrix.platform }}
           path: artifacts/*
           if-no-files-found: error
           compression-level: 0
@@ -140,6 +156,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: release-*
           merge-multiple: true
       - name: Publish verified packages
         env:
