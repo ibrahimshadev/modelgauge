@@ -67,7 +67,7 @@ jobs:
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_PATH -Value "$env:SystemRoot\System32"
       - name: Build Tauri application and packages
-        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+        shell: ${{ matrix.platform == 'windows-x64' && 'pwsh' || 'bash' }}
         run: npm run package -- --bundles "${{ matrix.bundles }}" -- --locked
       - name: Test reporting workers
         run: npm test
