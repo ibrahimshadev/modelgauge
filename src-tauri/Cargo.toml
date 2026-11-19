@@ -1,0 +1,25 @@
+[package]
+name = "modelgauge"
+version = "0.1.2"
+edition = "2021"
+rust-version = "1.88"
+description = "Model usage in your desktop tray"
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+open = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "sync", "time"] }
+
+[profile.release]
+strip = true
+opt-level = "s"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

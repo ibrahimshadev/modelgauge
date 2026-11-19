@@ -1,0 +1,9 @@
+#!/bin/sh
+# Open the Windows notification-area app from a WSL shell.
+set -eu
+project=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+installed=$(powershell.exe -NoProfile -NonInteractive -Command '[IO.Path]::Combine($env:LOCALAPPDATA,"ModelGauge","modelgauge.exe")' | tr -d '\r')
+exe=$(wslpath -u "$installed")
+if ! test -f "$exe"; then exe="$project/release/windows-x64/modelgauge.exe"; fi
+if ! test -f "$exe"; then printf '%s\n' 'Install the ModelGauge Windows build first.' >&2; exit 1; fi
+nohup "$exe" "$@" </dev/null >/dev/null 2>&1 &

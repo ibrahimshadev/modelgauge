@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ModelGauge",
+  "version": "0.1.2",
+  "identifier": "dev.modelgauge.desktop",
+  "build": {
+    "frontendDist": "../dist/ui",
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ModelGauge",
+        "width": 1070,
+        "height": 720,
+        "minWidth": 420,
+        "minHeight": 340,
+        "decorations": false,
+        "visible": false,
+        "skipTaskbar": true,
+        "center": true,
+        "create": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "category": "Utility",
+    "icon": [
+      "../assets/icon.png",
+      "../assets/icon.ico",
+      "../assets/icon.icns"
+    ],
+    "externalBin": [
+      "binaries/modelgauge-node"
+    ],
+    "resources": {
+      "../dist/worker.cjs": "worker.cjs",
+      "../dist/runtime/LICENSE-Node": "licenses/Node",
+      "../vendor/LICENSE-T3": "licenses/T3",
+      "../LICENSE": "licenses/ModelGauge",
+      "../node_modules/@fontsource-variable/inter/LICENSE": "licenses/Inter"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "../scripts/install.nsh"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.5"
+    }
+  }
+}

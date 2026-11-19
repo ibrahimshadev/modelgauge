@@ -1,0 +1,19 @@
+/* Use the upstream stylesheet for the panel’s
+   type scale, colour tokens, glass popovers and motion. */
+@import "@fontsource-variable/inter";
+@import "../../vendor/t3/apps/web/src/index.css";
+@source "../../vendor/t3/apps/web/src";
+@source "./";
+
+/* ModelGauge's own additions. The report header doubles as the window's
+   drag handle (src/desktop/bridge.ts starts the drag), so its text is not selectable. */
+@layer base {
+  button:not(:disabled),
+  [role="menuitem"],
+  [role="menuitemcheckbox"] {
+    cursor: pointer;
+  }
+}
+main > div > header {
+  user-select: none;
+}
