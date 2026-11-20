@@ -90,7 +90,7 @@ jobs:
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: ModelGauge ${{ env.RELEASE_TAG }}
-          releaseBody: "Recovers retained Claude sessions in the 90-day usage report. Includes Tauri packages for Windows, Linux and macOS."
+          releaseBody: "Tauri packages for Windows, Linux and macOS. See the commit history for what changed in this version."
           releaseDraft: true
           uploadUpdaterJson: false
           args: --bundles ${{ matrix.bundles }} -- --locked

@@ -21,6 +21,7 @@ import { readOpenCodeGoUsageLimits } from "@provider/opencode/usageLimits";
 import { existsSync } from "node:fs";
 import { makeAntigravityUsageProbe } from "@server/provider/antigravityUsageLimits";
 import { settings, managedAntigravityHome, cursorCredential } from "./host";
+import { ProbeRefused, retryAfterSeconds, withMemory } from "./limitsMemory";
 const exec = promisify(execFile);
 const reported = new Map();
 const pending = new Set();
@@ -117,7 +118,13 @@ async function vendorRequest(url, token, headers = {}, data?) {
     signal: AbortSignal.timeout(15000),
     body: data === undefined ? undefined : JSON.stringify(data),
   });
-  if (!response.ok) throw Error("Provider returned HTTP " + response.status);
+  if (response.status === 429 || response.status === 503)
+    throw new ProbeRefused(
+      "The provider is rate-limiting usage checks.",
+      retryAfterSeconds(response.headers.get("retry-after")),
+    );
+  if (!response.ok)
+    throw new ProbeRefused("Provider returned HTTP " + response.status + ".");
   return response.text();
 }
 async function profiles() {
@@ -164,7 +171,12 @@ async function readProfile(p, run) {
     const c = await credentials(p);
     const cli =
       driver === "claudeAgent"
-        ? await readClaudeCli(p).catch(() => undefined)
+        ? await readClaudeCli(p).catch((error) => {
+            // The CLI reads the same throttled endpoint, so asking again from here
+            // would only extend the provider's wait.
+            if (error instanceof ProbeRefused) throw error;
+            return undefined;
+          })
         : undefined;
     if (cli && !cli.usageLimits.unavailable) {
       const { usageLimits, plan } = cli;
@@ -204,7 +216,7 @@ async function readProfile(p, run) {
       id_token: { chatgpt_account_id: workspaceId },
     };
     const headers = adapter.header(account, process.platform, process.arch);
-    let claudeCredits;
+    let claudeCredits, refused;
     const call = (url) =>
       Effect.tryPromise(async () => {
         const isClaude =
@@ -214,7 +226,11 @@ async function readProfile(p, run) {
           isClaude ? url + "?cedar_ember=1&skip_spend=1" : url,
           c.token,
           headers,
-        );
+        ).catch((error) => {
+          // Effect wraps the rejection; keep the provider's own answer for the report.
+          refused = error;
+          throw error;
+        });
         if (isClaude && process.platform !== "darwin")
           claudeCredits = claudeResetCreditsToContract(
             JSON.parse(raw).cedar_ember,
@@ -224,7 +240,9 @@ async function readProfile(p, run) {
       });
     const result = await run(
       adapter.read({ account, call, checkedAt: new Date().toISOString() }),
-    );
+    ).catch((error) => {
+      throw refused ?? error;
+    });
     plan = result.plan;
     usageLimits = result.usageLimits;
     if (claudeCredits)
@@ -317,26 +335,27 @@ async function readHub(id, config, run) {
   }
 }
 export async function probeLimits(run) {
-  const rows = await Promise.all(
-    (await profiles()).map((p) =>
-      readProfile(p, run).catch((error) => ({
-        instanceId: p.id,
-        driver: p.driver,
-        enabled: true,
-        installed: true,
-        auth: { status: "unknown" },
-        usageLimits: {
-          windows: [],
-          checkedAt: new Date().toISOString(),
-          unavailable: {
-            reason: "probeFailed",
-            message:
-              error.message?.match(/Provider returned HTTP \d+/)?.[0] ||
-              "Could not read provider limits.",
+  const reads = await Promise.all(
+    (await profiles()).map(async (p) => ({
+      p,
+      ...(await withMemory(p, () => readProfile(p, run))),
+    })),
+  );
+  const checkedAt = new Date().toISOString();
+  // A source without accounts is how the Limits view carries a message with no bars of its own.
+  const notices = reads.flatMap(({ p, notice }) =>
+    notice
+      ? [
+          {
+            id: "remembered:" + p.id,
+            kind: "cliproxyApi",
+            label: notice.label,
+            checkedAt,
+            accounts: [],
+            error: notice.message,
           },
-        },
-      })),
-    ),
+        ]
+      : [],
   );
   const { usageLimitSources } = await settings();
   const sources = await Promise.all(
@@ -344,7 +363,10 @@ export async function probeLimits(run) {
       .filter(([, c]) => c.enabled)
       .map(([id, c]) => readHub(id, c, run)),
   );
-  return { providers: rows.filter(Boolean), sources };
+  return {
+    providers: reads.flatMap(({ row }) => (row ? [row] : [])),
+    sources: [...notices, ...sources],
+  };
 }
 export async function resetCredit(input, run) {
   if (input.sourceId) {

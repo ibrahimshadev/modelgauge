@@ -14,6 +14,13 @@ global.fetch = async (request, options) => {
       redeemed = true;
       body = { code: "reset" };
     } else if (url.pathname.endsWith("/usage")) {
+      // The test throttles the provider by creating this file, and counts the requests made.
+      const fs = require("node:fs");
+      const marker = require("node:path").join(process.env.MODELGAUGE_HOME, "throttle");
+      if (fs.existsSync(marker)) {
+        fs.appendFileSync(marker, "x");
+        return new Response("", { status: 429, headers: { "retry-after": "120" } });
+      }
       body = {
         plan_type: "plus",
         rate_limit: {

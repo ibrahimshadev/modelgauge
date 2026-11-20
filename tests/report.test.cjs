@@ -179,6 +179,27 @@ test("standalone report prices, deduplicates, matches models and redeems only a 
     call("reset", { instanceId: "codex", creditId: "sample" }),
     /Refresh/,
   );
+  // A throttled provider keeps the last good limits, says why, and is left alone until it allows a retry.
+  const throttle = path.join(env.MODELGAUGE_HOME, "throttle");
+  await fs.writeFile(throttle, "");
+  const read = async () => {
+    const report = await call("limits");
+    return {
+      limits: report.providers.find((p) => p.driver === "codex").usageLimits,
+      notice: report.sources.find((source) => source.id === "remembered:codex"),
+    };
+  };
+  const throttled = await read();
+  assert.equal(throttled.limits.windows.length, 1, "keep the last good limits");
+  assert.equal(throttled.limits.unavailable, undefined, "remembered limits still draw their bars");
+  assert.equal(throttled.limits.resetCredits, undefined, "remembered limits never offer a reset");
+  assert.deepEqual(
+    [throttled.notice.label, throttled.notice.error, throttled.notice.accounts],
+    ["Codex", "The provider is rate-limiting usage checks. Showing limits from 1 min ago. Next check in 2 min.", []],
+  );
+  assert.equal((await fs.readFile(throttle, "utf8")).length, 1);
+  assert.deepEqual((await read()).limits, throttled.limits);
+  assert.equal((await fs.readFile(throttle, "utf8")).length, 1, "wait out Retry-After before asking again");
   child.stdin.end();
   assert.equal((await exited)[0], 0);
 });

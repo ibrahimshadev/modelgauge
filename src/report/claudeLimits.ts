@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { claudeUsageResponseToLimits } from "@server/provider/claudeUsageLimits";
+import { ProbeRefused } from "./limitsMemory";
 import { claudeResetCreditsToContract } from "@server/provider/claudeResetCredits";
 
 export async function readClaudeCli(profile) {
@@ -83,10 +84,22 @@ export async function readClaudeCli(profile) {
             return;
           }
           if (request_id !== usageId) return;
+          const silent = () =>
+            new ProbeRefused(
+              "Claude is not reporting limits right now, usually because usage checks are rate-limited.",
+              300,
+            );
+          // A throttled CLI still answers, with limits "available" but none listed.
+          if (
+            response.rate_limits_available &&
+            Object.keys(response.rate_limits ?? {}).length === 0
+          )
+            throw silent();
           const { limits } = claudeUsageResponseToLimits({
             response,
             checkedAt: new Date().toISOString(),
           });
+          if (!limits.unavailable && limits.windows.length === 0) throw silent();
           const credits =
             process.platform === "darwin"
               ? undefined
